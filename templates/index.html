@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Email Analyzer</title>
+</head>
+<body>
+    <h1>Email Analyzer (Upload Raw .eml)</h1>
+    <form method="post" enctype="multipart/form-data">
+        <label>Raw Email File (.eml):</label>
+        <input type="file" name="raw_file" required><br><br>
+        <button type="submit">Analyze</button>
+    </form>
+
+    {% if result %}
+    <h2>Result:</h2>
+    <p><strong>Decision:</strong> {{ result.decision }}</p>
+    <p>SPF: {{ result.spf }}</p>
+    <p>DKIM: {{ result.dkim }}</p>
+    <p>DMARC: {{ result.dmarc }}</p>
+    <p>From: {{ result.from }}</p>
+    <p>Reply-To: {{ result.reply_to }}</p>
+    {% endif %}
+</body>
+</html>
