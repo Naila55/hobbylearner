@@ -1,157 +1,98 @@
-import re
-import spf
-import dkim
-import dns.resolver
+"""
+Analyse a raw `.eml` file and return:
+    verdict               (str)
+    auth                  (dict: {"SPF":..,"DKIM":..,"DMARC":..})
+    from_header           (str)
+    reply_to_header       (str)
+Works on Python 3.9+
+"""
 
-# STEP 1: Load full raw email
-def load_raw_email(file_path):
-    with open(file_path, 'rb') as f:
-        return f.read()
+from typing import Optional, Dict, Tuple
+import re, spf, dkim, dns. resolver, dmarc
 
-# STEP 2: Extract header (from raw email)
-def extract_header_from_raw(raw_email):
-    # Split raw email by blank line → headers are before first blank line
-    header_part = raw_email.split(b"\r\n\r\n", 1)[0]
-    header_text = header_part.decode("utf-8", errors="replace")
-    print("\n=== Extracted Header ===")
-    print(header_text)
-    return header_text
 
-# STEP 3: Extract sending IP from Received header
-def extract_sending_ip(header):
-    received_matches = re.findall(r'Received: from .* \[(\d+\.\d+\.\d+\.\d+)\]', header)
-    if received_matches:
-        sending_ip = received_matches[-1]
-        print("Extracted sending IP:", sending_ip)
-        return sending_ip
-    else:
-        print("Could not find sending IP.")
-        return None
+def _field(header: str, name: str) -> Optional[str]:
+    m = re.search(rf"^{name}:\s*(.+)$", header, re.I | re.M)
+    return m.group(1).strip() if m else None
 
-# STEP 4: Extract HELO domain from Received header
-def extract_helo_domain(header):
-    match = re.search(r'Received: from (\S+)', header)
-    if match:
-        helo_domain = match.group(1)
-        print("Extracted HELO domain:", helo_domain)
-        return helo_domain
-    else:
-        print("Could not find HELO domain.")
-        return None
 
-# STEP 5: Perform SPF check
-def perform_spf_check(sending_ip, sender, helo):
+def _extract_header(raw: bytes) -> str:
+    return raw.split(b"\r\n\r\n", 1)[0].decode("utf-8", errors="replace")
+
+
+def _sending_ip(header: str) -> Optional[str]:
+    m = re.findall(r"Received: from .* \[(\d+\.\d+\.\d+\.\d+)\]", header)
+    return m[-1] if m else None
+
+
+def _helo_domain(header: str) -> Optional[str]:
+    m = re.search(r"Received: from (\S+)", header)
+    return m.group(1) if m else None
+
+
+def _from_domain(header: str) -> Optional[str]:
+    fr = _field(header, "From")
+    return fr.split("@")[-1].split(">")[0].lower() if fr and "@" in fr else None
+
+
+def _mail_from_domain(header: str) -> Optional[str]:
+    rp = _field(header, "Return-Path")
+    if rp and "@" in rp:
+        return rp.strip("<>").split("@")[1].lower()
+    return _from_domain(header)
+
+
+def _dkim_domain(raw: bytes) -> Optional[str]:
+    m = re.search(rb"DKIM-Signature:.*\sd=([^;\s]+)", raw, re.I)
+    return m.group(1).decode() if m else None
+
+
+
+def _spf(ip: str, sender: str, helo: str) -> str:
     try:
-        result, code, explanation = spf.check2(i=sending_ip, s=sender, h=helo)
-        print("SPF result:", result)
-        return result
-    except Exception as e:
-        print("SPF check failed:", e)
+        res, *_ = spf.check2(i=ip, s=sender, h=helo)
+        return res
+    except Exception:
         return "fail"
 
-# STEP 6: Perform DKIM check
-def perform_dkim_check(raw_email):
+
+def _dkim(raw: bytes) -> str:
     try:
-        valid = dkim.verify(raw_email)
-        print("DKIM valid:", valid)
-        return "pass" if valid else "fail"
-    except Exception as e:
-        print("DKIM check failed:", e)
+        return "pass" if dkim.verify(raw) else "fail"
+    except Exception:
         return "fail"
 
-# STEP 7: Perform DMARC check
-def perform_dmarc_check(domain):
-    dmarc_domain = "_dmarc." + domain
+
+def _dmarc(org_dom: str, spf_ok: bool, dkim_ok: bool) -> str:
     try:
-        answers = dns.resolver.resolve(dmarc_domain, 'TXT')
-        for rdata in answers:
-            for txt_string in rdata.strings:
-                print("DMARC record:", txt_string.decode())
-                if "p=reject" in txt_string.decode() or "p=quarantine" in txt_string.decode():
-                    return "pass"
-        return "fail"
-    except Exception as e:
-        print("DMARC check failed or not found:", e)
+        rec = dmarc.get_record(org_dom)
+        if not rec:
+            return "fail"
+        return "pass" if (spf_ok or dkim_ok) else "fail"
+    except Exception:
         return "fail"
 
-# STEP 8: Extract From and Reply-To
-def extract_from_and_reply_to(header):
-    from_match = re.search(r'From: (.*)', header)
-    reply_to_match = re.search(r'Reply-To: (.*)', header)
+def analyze_email(raw: bytes) -> Tuple[str, Dict[str, str], str, str]:
+    hdr = _extract_header(raw)
 
-    from_email = from_match.group(1) if from_match else "unknown"
-    reply_to_email = reply_to_match.group(1) if reply_to_match else from_email
+    ip        = _sending_ip(hdr)  or "0.0.0.0"
+    helo      = _helo_domain(hdr) or "localhost"
+    from_dom  = _from_domain(hdr) or "example.com"
+    mfrom_dom = _mail_from_domain(hdr) or from_dom
+    dkim_dom  = _dkim_domain(raw)
 
-    return from_email, reply_to_email
+    spf_res  = _spf(ip, f"@{mfrom_dom}", helo)
+    dkim_res = _dkim(raw)
 
-# STEP 9: Is Reply-To suspicious?
-def is_reply_to_suspicious(from_email, reply_to_email):
-    return from_email != reply_to_email
+    spf_ok  = spf_res == "pass" and mfrom_dom == from_dom
+    dkim_ok = dkim_res == "pass" and dkim_dom and dkim_dom.endswith(from_dom)
+    dmarc_res = _dmarc(from_dom, spf_ok, dkim_ok)
 
-# STEP 10: Final decision logic
-def is_genuine(result):
-    if result["SPF"] == "pass" and result["DKIM"] == "pass" and result["DMARC"] == "pass":
-        return "Likely Genuine"
-    elif result["DMARC"] == "fail":
-        return "Likely Spoofed (DMARC failed)"
-    elif result["SPF"] == "fail" and result["DKIM"] == "fail" and result["DMARC"] == "fail":
-        return "Almost surely Fake"
-    elif result["SPF"] == "fail" or result["DKIM"] == "fail":
-        if result["DMARC"] == "pass":
-            return "Possibly Genuine but Suspicious (forwarded?)"
-        else:
-            return "Suspicious"
-    else:
-        return "Unknown / Needs Manual Review"
+    verdict = (
+        "Genuine"                  if dmarc_res == "pass"
+        else "Likely Spoofed"      if spf_res == "fail" and dkim_res == "fail"
+        else "Possibly Genuine but Suspicious"
+    )
 
-# STEP 11: Combined analyze (ONLY raw email input)
-def analyze_email(raw_email):
-    header_text = extract_header_from_raw(raw_email)
-
-    sending_ip = extract_sending_ip(header_text) or "127.0.0.1"  # Fallback
-    helo_domain = extract_helo_domain(header_text) or "localhost"  # Fallback
-
-    from_email, _ = extract_from_and_reply_to(header_text)
-    if "<" in from_email and ">" in from_email:
-        sender_email = re.search(r'<(.*)>', from_email).group(1)
-    else:
-        sender_email = from_email.strip()
-
-    domain = sender_email.split("@")[1] if "@" in sender_email else "example.com"
-
-    spf_result = perform_spf_check(sending_ip, sender_email, helo_domain)
-    dkim_result = perform_dkim_check(raw_email)
-    dmarc_result = perform_dmarc_check(domain)
-
-    auth_result = {
-        "SPF": "pass" if spf_result == "pass" else "fail",
-        "DKIM": dkim_result,
-        "DMARC": dmarc_result
-    }
-
-    from_email, reply_to_email = extract_from_and_reply_to(header_text)
-    reply_to_suspicious = is_reply_to_suspicious(from_email, reply_to_email)
-
-    decision = is_genuine(auth_result)
-    if reply_to_suspicious:
-        decision += " + Reply-To Mismatch (High Risk)"
-
-    return decision, auth_result, from_email, reply_to_email
-
-# For testing manually
-if __name__ == "__main__":
-    raw_file = input("Enter raw email file (.eml): ")
-    raw_email = load_raw_email(raw_file)
-    decision, auth_result, from_email, reply_to_email = analyze_email(raw_email)
-
-    print("\n=== Authentication Results ===")
-    print(f"SPF: {auth_result['SPF']}")
-    print(f"DKIM: {auth_result['DKIM']}")
-    print(f"DMARC: {auth_result['DMARC']}")
-
-    print("\n=== From / Reply-To ===")
-    print(f"From: {from_email}")
-    print(f"Reply-To: {reply_to_email}")
-
-    print("\n=== FINAL DECISION ===")
-    print(decision)
+    auth = {"SPF": spf_res, "DKIM": dkim_res, "DMARC": dmarc_res}
+    return verdict, auth, _field(hdr, "From") or "—", _field(hdr, "Reply-To") or "—"
