@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request
-import email_analyzer  # your new email_analyzer.py
+import email_analyzer
 
 app = Flask(__name__)
 
@@ -7,22 +7,18 @@ app = Flask(__name__)
 def index():
     result = None
     if request.method == "POST":
-        raw_file = request.files["raw_file"]
-        raw_email = raw_file.read()
-
-        # Call analyzer (only raw email needed now!)
-        decision, auth_result, from_email, reply_to_email = email_analyzer.analyze_email(raw_email)
+        raw_email = request.files["raw_file"].read()
+        verdict, auth, frm, rply = email_analyzer.analyze_email(raw_email)
 
         result = {
-            "decision": decision,
-            "spf": auth_result["SPF"],
-            "dkim": auth_result["DKIM"],
-            "dmarc": auth_result["DMARC"],
-            "from": from_email,
-            "reply_to": reply_to_email
+            "decision": verdict,
+            "spf":  auth["SPF"],
+            "dkim": auth["DKIM"],
+            "dmarc": auth["DMARC"],
+            "from": frm,
+            "reply_to": rply
         }
-
     return render_template("index.html", result=result)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True)          # http://127.0.0.1:5000
