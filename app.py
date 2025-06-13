@@ -7,8 +7,10 @@ app = Flask(__name__)
 def index():
     result = None
     if request.method == "POST":
+        uploaded_file = request.files["raw_file"]
         raw_email = request.files["raw_file"].read()
         verdict, auth, frm, rply = email_analyzer.analyze_email(raw_email)
+        print("File uploaded:", uploaded_file.filename)
 
         result = {
             "decision": verdict,
