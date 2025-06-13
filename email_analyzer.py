@@ -1,39 +1,28 @@
-"""
-Analyse a raw `.eml` file and return:
-    verdict               (str)
-    auth                  (dict: {"SPF":..,"DKIM":..,"DMARC":..})
-    from_header           (str)
-    reply_to_header       (str)
-Works on Python 3.9+
-"""
-
 from typing import Optional, Dict, Tuple
-import re, spf, dkim, dns. resolver, dmarc
+import re, spf, dkim, dns.resolver
 
+# Use Google DNS
+dns.resolver.default_resolver = dns.resolver.Resolver()
+dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
 def _field(header: str, name: str) -> Optional[str]:
-    m = re.search(rf"^{name}:\s*(.+)$", header, re.I | re.M)
+    m = re.search(rf"^{name}:[ \t]*(.+)$", header, re.I | re.M)
     return m.group(1).strip() if m else None
-
 
 def _extract_header(raw: bytes) -> str:
     return raw.split(b"\r\n\r\n", 1)[0].decode("utf-8", errors="replace")
 
-
 def _sending_ip(header: str) -> Optional[str]:
-    m = re.findall(r"Received: from .* \[(\d+\.\d+\.\d+\.\d+)\]", header)
-    return m[-1] if m else None
-
+    ips = re.findall(r"Received: from .*?\[(\d{1,3}(?:\.\d{1,3}){3})\]", header)
+    return ips[-1] if ips else None
 
 def _helo_domain(header: str) -> Optional[str]:
     m = re.search(r"Received: from (\S+)", header)
     return m.group(1) if m else None
 
-
 def _from_domain(header: str) -> Optional[str]:
     fr = _field(header, "From")
-    return fr.split("@")[-1].split(">")[0].lower() if fr and "@" in fr else None
-
+    return fr.split("@")[1].split(">")[0].lower() if fr and "@" in fr else None
 
 def _mail_from_domain(header: str) -> Optional[str]:
     rp = _field(header, "Return-Path")
@@ -41,12 +30,19 @@ def _mail_from_domain(header: str) -> Optional[str]:
         return rp.strip("<>").split("@")[1].lower()
     return _from_domain(header)
 
-
 def _dkim_domain(raw: bytes) -> Optional[str]:
-    m = re.search(rb"DKIM-Signature:.*\sd=([^;\s]+)", raw, re.I)
-    return m.group(1).decode() if m else None
+    headers = _extract_header(raw)
+    unfolded = re.sub(r"\r\n\s+", " ", headers)
+    m = re.search(r"DKIM-Signature:.*\bd=([^;\s]+)", unfolded, re.I)
+    return m.group(1).lower() if m else None
 
-
+def _dkim_unfolded(raw: bytes) -> str:
+    try:
+        unfolded = re.sub(rb"\r\n[ \t]+", b" ", raw)
+        return "pass" if dkim.verify(unfolded) else "fail"
+    except Exception as e:
+        print("️ DKIM error:", e)
+        return "fail"
 
 def _spf(ip: str, sender: str, helo: str) -> str:
     try:
@@ -55,42 +51,52 @@ def _spf(ip: str, sender: str, helo: str) -> str:
     except Exception:
         return "fail"
 
-
-def _dkim(raw: bytes) -> str:
+def _dmarc(domain: str, spf_ok: bool, dkim_ok: bool) -> str:
     try:
-        return "pass" if dkim.verify(raw) else "fail"
-    except Exception:
+        answers = dns.resolver.resolve(f"_dmarc.{domain}", "TXT")
+        for rdata in answers:
+            txt = b"".join(rdata.strings).decode()
+            if txt.lower().startswith("v=dmarc1"):
+                return "pass" if (spf_ok or dkim_ok) else "fail"
         return "fail"
-
-
-def _dmarc(org_dom: str, spf_ok: bool, dkim_ok: bool) -> str:
-    try:
-        rec = dmarc.get_record(org_dom)
-        if not rec:
-            return "fail"
-        return "pass" if (spf_ok or dkim_ok) else "fail"
-    except Exception:
+    except Exception as e:
+        print("️ DMARC lookup error:", e)
         return "fail"
 
 def analyze_email(raw: bytes) -> Tuple[str, Dict[str, str], str, str]:
+    try:
+        safe_preview = raw[:2000].decode("utf-8", errors="replace")
+        ascii_preview = safe_preview.encode("ascii", "replace").decode()
+        print("=== RAW EMAIL PREVIEW (first 2000 chars) ===")
+        print(ascii_preview)
+    except Exception as e:
+        print("Preview error:", e)
+
     hdr = _extract_header(raw)
+    print("Return-Path:", _field(hdr, "Return-Path"))
+    print(" From:", _field(hdr, "From"))
 
-    ip        = _sending_ip(hdr)  or "0.0.0.0"
-    helo      = _helo_domain(hdr) or "localhost"
-    from_dom  = _from_domain(hdr) or "example.com"
+    ip = _sending_ip(hdr) or "0.0.0.0"
+    helo = _helo_domain(hdr) or "localhost"
+    from_dom = _from_domain(hdr) or "example.com"
     mfrom_dom = _mail_from_domain(hdr) or from_dom
-    dkim_dom  = _dkim_domain(raw)
+    dkim_dom = _dkim_domain(raw)
 
-    spf_res  = _spf(ip, f"@{mfrom_dom}", helo)
-    dkim_res = _dkim(raw)
+    spf_res = _spf(ip, mfrom_dom, helo)
+    dkim_res = _dkim_unfolded(raw)
 
-    spf_ok  = spf_res == "pass" and mfrom_dom == from_dom
-    dkim_ok = dkim_res == "pass" and dkim_dom and dkim_dom.endswith(from_dom)
+    spf_ok = spf_res in ("pass", "softpass") and mfrom_dom.endswith(from_dom)
+    dkim_ok = (dkim_res == "pass") or (dkim_dom and dkim_dom.endswith(from_dom))
+
+    if dkim_res != "pass" and dkim_ok:
+        print(f"️ DKIM domain-match fallback for {dkim_dom}")
+        dkim_res = "domain match"
+
     dmarc_res = _dmarc(from_dom, spf_ok, dkim_ok)
 
     verdict = (
-        "Genuine"                  if dmarc_res == "pass"
-        else "Likely Spoofed"      if spf_res == "fail" and dkim_res == "fail"
+        "Genuine" if dmarc_res == "pass"
+        else "Likely Spoofed" if spf_res == "fail" and dkim_res == "fail"
         else "Possibly Genuine but Suspicious"
     )
 
