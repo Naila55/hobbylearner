@@ -6,9 +6,11 @@ app = Flask(__name__)
 @app.route("/", methods=["GET", "POST"])
 def index():
     result = None
+    filename = None
     if request.method == "POST":
         uploaded_file = request.files["raw_file"]
-        raw_email = request.files["raw_file"].read()
+        filename = uploaded_file.filename
+        raw_email =  uploaded_file.read()
         verdict, auth, frm, rply = email_analyzer.analyze_email(raw_email)
         print("File uploaded:", uploaded_file.filename)
 
@@ -20,7 +22,8 @@ def index():
             "from": frm,
             "reply_to": rply
         }
-    return render_template("index.html", result=result)
+    return render_template("index.html", result=result, filename=filename)
 
-if __name__ == "__main__":
-    app.run(debug=True)          # http://127.0.0.1:5000
+
+#if __name__ == "__main__":
+app.run(debug=True)          # http://127.0.0.1:5000
