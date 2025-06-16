@@ -1,24 +1,128 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Email Analyzer</title>
+    <style>
+        body {
+            background: #f0f4f8;
+            font-family: Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background-color: #ffffff;
+            padding: 30px 40px;
+            border-radius: 10px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 400px;
+        }
+
+        h1 {
+            color: #0077cc;
+            margin-bottom: 20px;
+        }
+input[type="file"] {
+    opacity: 0;                /* Hide the actual file input */
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+}
+
+.custom-file-upload {
+    position: relative;
+    display: inline-block;
+    padding: 12px 20px;
+    background-color: white;         /* ✅ Remove the blue background */
+    color: #0077cc;
+    border: 2px solid #0077cc;       /* ✅ Keep the styled box */
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    overflow: hidden;
+    text-align: center;
+}
+
+        .file-name {
+            font-size: 0.9em;
+            color: #555;
+            margin-top: 5px;
+        }
+
+        input[type="submit"] {
+            margin-top: 15px;
+            background-color: #0077cc;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        input[type="submit"]:hover {
+            background-color: #005fa3;
+        }
+
+        .result {
+            margin-top: 30px;
+            text-align: left;
+        }
+
+        .result p {
+            margin: 8px 0;
+        }
+
+        .result strong {
+            color: #333;
+        }
+    </style>
 </head>
 <body>
-    <h1>Email Analyzer (Upload Raw .eml)</h1>
-    <form method="post" enctype="multipart/form-data">
-        <label>Raw Email File (.eml):</label>
-        <input type="file" name="raw_file" required><br><br>
-        <button type="submit">Analyze</button>
-    </form>
+    <div class="container">
+        <h1>Email Analyzer</h1>
+        <form method="POST" enctype="multipart/form-data">
+            <label class="custom-file-upload">
+                Choose .EML File
+                <input type="file" name="raw_file" id="fileInput" required />
+            </label>
+            <div class="file-name" id="fileName">
+        {% if filename %}
+            {{ filename }}
+        {% else %}
+            No file selected
+        {% endif %}
+    </div>
+    <input type="submit" value="Analyze" />
+        </form>
 
-    {% if result %}
-    <h2>Result:</h2>
-    <p><strong>Decision:</strong> {{ result.decision }}</p>
-    <p>SPF: {{ result.spf }}</p>
-    <p>DKIM: {{ result.dkim }}</p>
-    <p>DMARC: {{ result.dmarc }}</p>
-    <p>From: {{ result.from }}</p>
-    <p>Reply-To: {{ result.reply_to }}</p>
-    {% endif %}
+        {% if result %}
+        <div class="result">
+            <h3>Result:</h3>
+            <p><strong>Decision:</strong> {{ result['decision'] }}</p>
+            <p><strong>SPF:</strong> {{ result['spf'] }}</p>
+            <p><strong>DKIM:</strong> {{ result['dkim'] }}</p>
+            <p><strong>DMARC:</strong> {{ result['dmarc'] }}</p>
+            <p><strong>From:</strong> {{ result['from'] }}</p>
+            <p><strong>Reply-To:</strong> {{ result['reply_to'] }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+
+        fileInput.addEventListener('change', function () {
+            fileName.textContent = this.files.length > 0 ? this.files[0].name : "";
+        });
+    </script>
 </body>
 </html>
