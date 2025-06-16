@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Tuple
 import re, spf, dkim, dns.resolver
 
-# Use Google DNS
+
 dns.resolver.default_resolver = dns.resolver.Resolver()
 dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
