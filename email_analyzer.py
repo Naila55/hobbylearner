@@ -1,7 +1,6 @@
 from typing import Optional, Dict, Tuple
-import re, spf, dkim, dns. resolver
+import re, spf, dkim, dns.resolver
 
-# Use Google DNS
 dns.resolver.default_resolver = dns.resolver.Resolver()
 dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
@@ -38,17 +37,19 @@ def _dkim_domain(raw: bytes) -> Optional[str]:
 
 def _dkim_unfolded(raw: bytes) -> str:
     try:
-        unfolded = re.sub(rb"\r\n[ \t]+", b" ", raw)
-        return "pass" if dkim.verify(unfolded) else "fail"
+        d = dkim.DKIM(raw)
+        result = d.verify()
+        return "pass" if result else "fail"
     except Exception as e:
-        print("️ DKIM error:", e)
+        print(" DKIM error:", e)
         return "fail"
 
 def _spf(ip: str, sender: str, helo: str) -> str:
     try:
         res, *_ = spf.check2(i=ip, s=sender, h=helo)
         return res
-    except Exception:
+    except Exception as e:
+        print(" SPF error:", e)
         return "fail"
 
 def _dmarc(domain: str, spf_ok: bool, dkim_ok: bool) -> str:
@@ -60,22 +61,18 @@ def _dmarc(domain: str, spf_ok: bool, dkim_ok: bool) -> str:
                 return "pass" if (spf_ok or dkim_ok) else "fail"
         return "fail"
     except Exception as e:
-        print("️ DMARC lookup error:", e)
+        print(" DMARC error:", e)
         return "fail"
 
-def analyze_email(raw: bytes) -> Tuple[str, Dict[str, str], str, str]:
+def analyze_email(raw: bytes) -> Tuple[str, Dict[str, str], str, str, str]:
     try:
-        safe_preview = raw[:2000].decode("utf-8", errors="replace")
-        ascii_preview = safe_preview.encode("ascii", "replace").decode()
-        print("=== RAW EMAIL PREVIEW (first 2000 chars) ===")
-        print(ascii_preview)
+        print("RAW EMAIL PREVIEW ")
+        preview = raw[:2000].decode("utf-8", errors="replace")
+        print(preview)
     except Exception as e:
-        print("Preview error:", e)
+        print(" Preview error:", e)
 
     hdr = _extract_header(raw)
-    print("Return-Path:", _field(hdr, "Return-Path"))
-    print(" From:", _field(hdr, "From"))
-
     ip = _sending_ip(hdr) or "0.0.0.0"
     helo = _helo_domain(hdr) or "localhost"
     from_dom = _from_domain(hdr) or "example.com"
@@ -86,10 +83,10 @@ def analyze_email(raw: bytes) -> Tuple[str, Dict[str, str], str, str]:
     dkim_res = _dkim_unfolded(raw)
 
     spf_ok = spf_res in ("pass", "softpass") and mfrom_dom.endswith(from_dom)
-    dkim_ok = (dkim_res == "pass") or (dkim_dom and dkim_dom.endswith(from_dom))
+    dkim_ok = dkim_res == "pass" or (dkim_dom and dkim_dom.endswith(from_dom))
 
     if dkim_res != "pass" and dkim_ok:
-        print(f"️ DKIM domain-match fallback for {dkim_dom}")
+        print(f" DKIM verified by domain match: {dkim_dom} ≈ {from_dom}")
         dkim_res = "domain match"
 
     dmarc_res = _dmarc(from_dom, spf_ok, dkim_ok)
