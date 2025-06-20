@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Tuple
-import re, spf, dkim, dns.resolver
+import re, spf, dkim, dns. resolver
 
-
+# Use Google DNS
 dns.resolver.default_resolver = dns.resolver.Resolver()
 dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
@@ -101,4 +101,4 @@ def analyze_email(raw: bytes) -> Tuple[str, Dict[str, str], str, str]:
     )
 
     auth = {"SPF": spf_res, "DKIM": dkim_res, "DMARC": dmarc_res}
-    return verdict, auth, _field(hdr, "From") or "—", _field(hdr, "Reply-To") or "—"
+    return verdict, auth, _field(hdr, "From") or "—", _field(hdr, "Reply-To") or "—", _field(hdr, "Return-Path") or "—"
