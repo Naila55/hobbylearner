@@ -28,7 +28,7 @@
             margin-bottom: 20px;
         }
 input[type="file"] {
-    opacity: 0;          
+    opacity: 0;                /* Hide the actual file input */
     position: absolute;
     left: 0;
     top: 0;
@@ -41,9 +41,9 @@ input[type="file"] {
     position: relative;
     display: inline-block;
     padding: 12px 20px;
-    background-color: white;         
+    background-color: white;         /* ✅ Remove the blue background */
     color: #0077cc;
-    border: 2px solid #0077cc;       
+    border: 2px solid #0077cc;       /* ✅ Keep the styled box */
     border-radius: 6px;
     font-weight: bold;
     cursor: pointer;
@@ -112,6 +112,7 @@ input[type="file"] {
             <p><strong>DMARC:</strong> {{ result['dmarc'] }}</p>
             <p><strong>From:</strong> {{ result['from'] }}</p>
             <p><strong>Reply-To:</strong> {{ result['reply_to'] }}</p>
+            <p><strong>Return-Path:</strong> {{ result['return_path'] }}</p>
         </div>
         {% endif %}
     </div>
